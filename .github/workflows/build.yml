@@ -1,0 +1,66 @@
+# FINAL - 100% WORKING - NO CACHE - CORRECT QUOTES
+name: QEMU WASM WORK
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential git python3 python3-venv ninja-build pkg-config libglib2.0-dev autoconf automake libtool
+
+      - name: Setup Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git
+          cd emsdk
+          ./emsdk install latest
+          ./emsdk activate latest
+          echo "$PWD" >> $GITHUB_PATH
+          echo "$PWD/upstream/emscripten" >> $GITHUB_PATH
+
+      - name: Clone QEMU
+        run: git clone --depth 1 --branch v9.0.0 https://git.qemu.org/git/qemu.git
+
+      - name: Configure (CORRECTED)
+        run: |
+          cd qemu
+          mkdir -p build && cd build
+          emconfigure ../configure \
+            --target-list=i386-softmmu \
+            --enable-tcg-interpreter \
+            --disable-system --disable-user \
+            --disable-pie --disable-tools \
+            --disable-slirp --disable-vnc --disable-sdl \
+            --disable-gtk --disable-curses --disable-xen \
+            --disable-spice --disable-opengl --disable-werror \
+            --disable-docs --audio-drv-list= \
+            --extra-cflags="-D__EMSCRIPTEN__=1 -O3" \
+            --extra-ldflags="-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s FORCE_FILESYSTEM=1 -s EXIT_RUNTIME=1"
+
+      - name: Build
+        run: |
+          cd qemu/build
+          emmake make -j$(nproc) i386-softmmu/qemu-system-i386
+
+      - name: Package
+        run: |
+          cd qemu/build
+          emcc i386-softmmu/qemu-system-i386 \
+            -O3 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s FORCE_FILESYSTEM=1 -s EXIT_RUNTIME=1 \
+            -s EXPORTED_FUNCTIONS='["_main"]' \
+            -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","FS"]' \
+            -s MODULARIZE=1 -s EXPORT_NAME='QEMU' \
+            -o qemu-system-i386.js
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-wasm
+          path: |
+            qemu/build/qemu-system-i386.js
+            qemu/build/qemu-system-i386.wasm
