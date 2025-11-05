@@ -1,49 +1,104 @@
-#!/bin/bash
-set -e
+name: Build QEMU WebAssembly
 
-# 1. Setup EMSDK
-git clone https://github.com/emscripten-core/emsdk.git
-cd emsdk
-./emsdk install latest
-./emsdk activate latest
-source ./emsdk_env.sh
-cd ..
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
-# 2. Download QEMU (optional: v10.1.2)
-wget https://download.qemu.org/qemu-10.1.2.tar.xz
-tar xvJf qemu-10.1.2.tar.xz
-mv qemu-10.1.2 qemu-src
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-# Or clone latest git version:
-# git clone --depth=1 https://gitlab.com/qemu-project/qemu.git qemu-src
+    steps:
+      # 1️⃣ Checkout the repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-# 3. Create build directory
-mkdir -p build-wasm
-cd build-wasm
+      # 2️⃣ Install system dependencies
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git python3-pip cmake ninja-build
+          pip install meson
 
-# 4. Configure Meson for WebAssembly
-meson setup . ../qemu-src \
-  --cross-file ../.github/workflows/emscripten.cross \
-  -Dtargets=x86_64-softmmu \
-  -Dtcg-interpreter=true \
-  -Dglib=disabled \
-  -Dgtk=disabled \
-  -Dsdl=disabled \
-  -Dxen=disabled \
-  -Dkvm=disabled \
-  -Dvnc=disabled \
-  -Dopengl=disabled \
-  -Ddocs=false \
-  -Dtools=false \
-  -Duser=false
+      # 3️⃣ Setup Emscripten SDK
+      - name: Setup EMSDK
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git
+          cd emsdk
+          ./emsdk install latest
+          ./emsdk activate latest
+          source ./emsdk_env.sh
+          emcc -v
 
-# 5. Build
-ninja -C .
+      # 4️⃣ Create Emscripten cross-file
+      - name: Create Emscripten cross file
+        run: |
+          mkdir -p .github/workflows
+          cat > .github/workflows/emscripten.cross << 'EOF'
+[binaries]
+c = '/home/runner/work/androVM/androVM/emsdk/upstream/emscripten/emcc'
+cpp = '/home/runner/work/androVM/androVM/emsdk/upstream/emscripten/em++'
+ar = '/home/runner/work/androVM/androVM/emsdk/upstream/emscripten/emar'
+strip = 'true'
+pkgconfig = '/usr/bin/pkg-config'
 
-# 6. Copy output to dist/
-mkdir -p ../dist
-cp qemu-system-x86_64.js ../dist/ 2>/dev/null || true
-cp qemu-system-x86_64.wasm ../dist/ 2>/dev/null || true
+[host_machine]
+system = 'wasm'
+cpu_family = 'wasm32'
+cpu = 'wasm32'
+endian = 'little'
 
-echo "✅ Build complete. Files in dist/:"
-ls -lh ../dist
+[properties]
+needs_exe_wrapper = true
+EOF
+
+      # 5️⃣ Clone QEMU source
+      - name: Clone QEMU source
+        run: git clone --depth=1 https://gitlab.com/qemu-project/qemu.git qemu-src
+
+      # 6️⃣ Configure QEMU for WebAssembly
+      - name: Configure QEMU (Meson)
+        run: |
+          source ./emsdk/emsdk_env.sh
+          mkdir -p build-wasm
+          cd build-wasm
+          meson setup . ../qemu-src \
+            --cross-file ../.github/workflows/emscripten.cross \
+            -Dtargets=x86_64-softmmu \
+            -Dtcg-interpreter=true \
+            -Dglib=disabled \
+            -Dgtk=disabled \
+            -Dsdl=disabled \
+            -Dxen=disabled \
+            -Dkvm=disabled \
+            -Dvnc=disabled \
+            -Dopengl=disabled \
+            -Ddocs=false \
+            -Dtools=false \
+            -Duser=false
+
+      # 7️⃣ Build QEMU
+      - name: Build QEMU
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cd build-wasm
+          ninja -j$(nproc)
+
+      # 8️⃣ Collect artifacts
+      - name: Collect JS + WASM
+        run: |
+          mkdir -p dist
+          cp build-wasm/qemu-system-x86_64.js dist/ 2>/dev/null || true
+          cp build-wasm/qemu-system-x86_64.wasm dist/ 2>/dev/null || true
+          echo "✅ Build complete. Files in dist/:"
+          ls -lh dist
+
+      # 9️⃣ Upload artifacts
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-wasm-browser
+          path: dist/
