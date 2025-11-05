@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout the repository
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -65,8 +65,7 @@ EOF
           source ./emsdk/emsdk_env.sh
           mkdir -p build-wasm
           cd build-wasm
-          meson setup . ../qemu-src \
-            --cross-file ../.github/workflows/emscripten.cross \
+          meson setup . ../qemu-src --cross-file ../.github/workflows/emscripten.cross \
             -Dtargets=x86_64-softmmu \
             -Dtcg-interpreter=true \
             -Dglib=disabled \
@@ -87,8 +86,8 @@ EOF
           cd build-wasm
           ninja -j$(nproc)
 
-      # 8️⃣ Collect artifacts
-      - name: Collect JS + WASM
+      # 8️⃣ Collect JS + WASM
+      - name: Collect artifacts
         run: |
           mkdir -p dist
           cp build-wasm/qemu-system-x86_64.js dist/ 2>/dev/null || true
